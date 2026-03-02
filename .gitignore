@@ -1,0 +1,20 @@
+# Environment
+.env
+__pycache__/
+*.pyc
+*.pyo
+
+# Temp files
+temp_downloads/
+bot.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Docker
+.dockerignore
