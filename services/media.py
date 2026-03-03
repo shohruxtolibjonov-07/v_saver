@@ -51,31 +51,7 @@ class MediaProcessor:
             "media_type": media_type,
         }
 
-        if file_size <= MAX_TELEGRAM_FILE_SIZE:
-            return result
-
-        if media_type == "video":
-            compressed = await self._compress_video(file_path)
-            if compressed:
-                result["file_path"] = compressed
-                result["file_size"] = os.path.getsize(compressed)
-                result["was_compressed"] = True
-
-                if result["file_size"] > MAX_TELEGRAM_FILE_SIZE:
-                    compressed2 = await self._compress_video(file_path, aggressive=True)
-                    if compressed2:
-                        if compressed != file_path:
-                            self._safe_remove(compressed)
-                        result["file_path"] = compressed2
-                        result["file_size"] = os.path.getsize(compressed2)
-
-        elif media_type == "audio":
-            compressed = await self._compress_audio(file_path)
-            if compressed:
-                result["file_path"] = compressed
-                result["file_size"] = os.path.getsize(compressed)
-                result["was_compressed"] = True
-
+        # Siqish olib tashlandi — tezlik uchun fayl to'g'ridan-to'g'ri yuboriladi
         return result
 
     async def extract_audio_from_video(self, video_path: str, title: str = "audio") -> dict:
