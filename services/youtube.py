@@ -74,7 +74,7 @@ class YouTubeDownloader:
         """Download video — optimized for speed."""
         ydl_opts = {
             **_BASE_OPTS,
-            "format": "best[ext=mp4][filesize<50M]/best[ext=mp4][height<=720]/best[ext=mp4]/best[height<=720]/best",
+            "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
             "outtmpl": str(self.temp_dir / "%(id)s.%(ext)s"),
             "merge_output_format": "mp4",
             "postprocessors": [],
