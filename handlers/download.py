@@ -9,7 +9,7 @@ from aiogram import Router, types, Bot, F
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.enums import ChatAction
 
-from config import ADMIN_ID, MAX_TELEGRAM_FILE_SIZE, TEMP_DIR
+from config import ADMIN_ID, MAX_TELEGRAM_FILE_SIZE, TELEGRAM_VIDEO_LIMIT, TEMP_DIR
 from utils import messages as msg
 from services.youtube import YouTubeDownloader
 from services.instagram import InstagramDownloader
@@ -303,21 +303,36 @@ async def _process_youtube_direct(bot: Bot, chat_id: int, user_id: int, url: str
         caption = f"🎬 <b>{html_lib.escape(result['title'][:200])}</b>"
         if dur:
             caption += f"\n⏱ {dur}"
+        caption += f"\n📦 {_format_size(processed['file_size'])}"
 
         input_file = FSInputFile(processed["file_path"])
 
+        # 50 MB dan kichik bo'lsa — video/audio sifatida yuboramiz (inline play)
+        # 50 MB dan katta bo'lsa — document sifatida yuboramiz (Telegram 2 GB gacha qabul qiladi)
         if result["media_type"] == "audio":
-            await bot.send_audio(
-                chat_id, audio=input_file, caption=caption,
-                parse_mode="HTML", title=result["title"][:64],
-                duration=result.get("duration"),
-            )
+            if processed["file_size"] <= TELEGRAM_VIDEO_LIMIT:
+                await bot.send_audio(
+                    chat_id, audio=input_file, caption=caption,
+                    parse_mode="HTML", title=result["title"][:64],
+                    duration=result.get("duration"),
+                )
+            else:
+                await bot.send_document(
+                    chat_id, document=input_file, caption=caption,
+                    parse_mode="HTML",
+                )
         else:
-            await bot.send_video(
-                chat_id, video=input_file, caption=caption,
-                parse_mode="HTML", duration=result.get("duration"),
-                supports_streaming=True,
-            )
+            if processed["file_size"] <= TELEGRAM_VIDEO_LIMIT:
+                await bot.send_video(
+                    chat_id, video=input_file, caption=caption,
+                    parse_mode="HTML", duration=result.get("duration"),
+                    supports_streaming=True,
+                )
+            else:
+                await bot.send_document(
+                    chat_id, document=input_file, caption=caption,
+                    parse_mode="HTML",
+                )
 
         # Delete status message
         try:
@@ -361,11 +376,19 @@ async def _process_instagram_direct(bot: Bot, chat_id: int, user_id: int, url: s
             input_file = FSInputFile(processed["file_path"])
 
             caption = f"🎬 <b>{html_lib.escape(result.get('title', 'Instagram media')[:200])}</b>"
+            caption += f"\n📦 {_format_size(processed['file_size'])}"
 
+            # 50 MB dan kichik — media sifatida, katta — document sifatida yuborish
             if file_info["media_type"] == "audio":
-                await bot.send_audio(chat_id, audio=input_file, caption=caption, parse_mode="HTML")
+                if processed["file_size"] <= TELEGRAM_VIDEO_LIMIT:
+                    await bot.send_audio(chat_id, audio=input_file, caption=caption, parse_mode="HTML")
+                else:
+                    await bot.send_document(chat_id, document=input_file, caption=caption, parse_mode="HTML")
             elif file_info["media_type"] == "video":
-                await bot.send_video(chat_id, video=input_file, caption=caption, parse_mode="HTML", supports_streaming=True)
+                if processed["file_size"] <= TELEGRAM_VIDEO_LIMIT:
+                    await bot.send_video(chat_id, video=input_file, caption=caption, parse_mode="HTML", supports_streaming=True)
+                else:
+                    await bot.send_document(chat_id, document=input_file, caption=caption, parse_mode="HTML")
             elif file_info["media_type"] == "photo":
                 await bot.send_photo(chat_id, photo=input_file, caption=caption, parse_mode="HTML")
             else:
