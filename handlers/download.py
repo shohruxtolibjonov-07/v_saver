@@ -1,4 +1,4 @@
-"""URL detection, format/quality selection, and download pipeline handler."""
+"""URL → quality buttons with sizes → download → send."""
 
 import re
 import os
@@ -16,7 +16,6 @@ from utils import messages as msg
 from services.youtube import YouTubeDownloader
 from services.instagram import InstagramDownloader
 from services.media import MediaProcessor
-from services.worker import WorkerPool, DownloadJob
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -26,16 +25,7 @@ yt_downloader = YouTubeDownloader()
 ig_downloader = InstagramDownloader()
 media_processor = MediaProcessor()
 
-# Worker pool reference — set at startup
-_worker_pool: WorkerPool | None = None
-
-
-def set_worker_pool(pool: WorkerPool):
-    global _worker_pool
-    _worker_pool = pool
-
-
-# ─── URL cache (hash → url, TTL=1h) ─────────────
+# ─── URL cache ───────────────────────────────────
 _URL_CACHE_TTL = 3600
 _url_cache: dict[str, tuple[str, float]] = {}
 
@@ -105,24 +95,25 @@ def _format_size(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
 
 
-def _make_format_keyboard(url_hash: str) -> InlineKeyboardMarkup:
-    """Format selection: Video / Audio."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🎬 Video", callback_data=f"dl:v:{url_hash}"),
-            InlineKeyboardButton(text="🎧 Audio", callback_data=f"dl:a:{url_hash}"),
-        ]
-    ])
+def _make_quality_keyboard(url_hash: str, qualities: list, mp3_size: int) -> InlineKeyboardMarkup:
+    """Build SaveYoutubeBot-style quality buttons (3 per row)."""
+    rows = []
+    row = []
+    for q in qualities:
+        label = f"{q['icon']} {q['label']}:  {_format_size(q['size'])}"
+        callback = f"ql:{q['height']}:{url_hash}"
+        row.append(InlineKeyboardButton(text=label, callback_data=callback))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
 
+    # MP3 button
+    mp3_label = f"🎧 MP3:  {_format_size(mp3_size)}" if mp3_size > 0 else "🎧 MP3"
+    rows.append([InlineKeyboardButton(text=mp3_label, callback_data=f"ql:mp3:{url_hash}")])
 
-def _make_quality_keyboard(url_hash: str, estimated_size: int) -> InlineKeyboardMarkup:
-    """Quality selection for >50MB files."""
-    size_str = _format_size(estimated_size)
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"📥 Original ({size_str})", callback_data=f"ql:best:{url_hash}")],
-        [InlineKeyboardButton(text="📦 O'rtacha (~720p)", callback_data=f"ql:medium:{url_hash}")],
-        [InlineKeyboardButton(text="📄 Kichik (~480p)", callback_data=f"ql:low:{url_hash}")],
-    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _make_caption(title: str, duration_str: str, size: int, media_type: str) -> str:
@@ -233,100 +224,7 @@ async def handle_video_message(message: types.Message, bot: Bot):
 
 
 # ═══════════════════════════════════════════════════
-# Callback: Format selection (dl:v:hash / dl:a:hash)
-# ═══════════════════════════════════════════════════
-@router.callback_query(F.data.startswith("dl:"))
-async def handle_format_callback(callback: CallbackQuery, bot: Bot):
-    await callback.answer()
-
-    parts = callback.data.split(":", 2)
-    if len(parts) != 3:
-        return
-
-    _, mode, url_hash = parts
-    is_audio = (mode == "a")
-
-    url = _get_cached_url(url_hash)
-    if not url:
-        try:
-            await callback.message.edit_text(msg.ERROR_LINK_EXPIRED, parse_mode="HTML")
-        except Exception:
-            pass
-        return
-
-    platform = "youtube" if YOUTUBE_RE.search(url) else "instagram"
-
-    # Show immediate feedback
-    status_text = msg.CHECKING_INFO
-    try:
-        await callback.message.edit_text(status_text, parse_mode="HTML")
-    except Exception:
-        pass
-
-    try:
-        if is_audio:
-            # Audio — always download directly (audio is always small)
-            status_text = msg.DOWNLOADING_AUDIO
-            try:
-                await callback.message.edit_text(status_text, parse_mode="HTML")
-            except Exception:
-                pass
-
-            await _process_download(
-                bot, callback.message.chat.id, callback.from_user.id,
-                url, platform, is_audio=True, quality="best",
-                status_msg=callback.message,
-            )
-        else:
-            # Video — check size first
-            if platform == "youtube":
-                info = await yt_downloader.get_info(url)
-                estimated_size = info.get("video_size", 0)
-            else:
-                info = await ig_downloader.get_info(url)
-                estimated_size = info.get("estimated_size", 0)
-
-            if estimated_size > TELEGRAM_VIDEO_LIMIT and estimated_size > 0:
-                # >50 MB — show quality choice
-                keyboard = _make_quality_keyboard(url_hash, estimated_size)
-                size_str = _format_size(estimated_size)
-                try:
-                    await callback.message.edit_text(
-                        msg.QUALITY_CHOICE.format(size=size_str),
-                        parse_mode="HTML",
-                        reply_markup=keyboard,
-                    )
-                except Exception:
-                    pass
-            else:
-                # ≤50 MB — download best quality directly
-                status_text = msg.DOWNLOADING_VIDEO
-                try:
-                    await callback.message.edit_text(status_text, parse_mode="HTML")
-                except Exception:
-                    pass
-
-                await _process_download(
-                    bot, callback.message.chat.id, callback.from_user.id,
-                    url, platform, is_audio=False, quality="best",
-                    status_msg=callback.message,
-                )
-
-    except Exception as e:
-        error_text = str(e)
-        logger.error(f"Format callback error for {url}: {error_text}")
-
-        try:
-            await callback.message.edit_text(msg.ERROR_DOWNLOAD_FAILED, parse_mode="HTML")
-        except Exception:
-            pass
-
-        # Notify admin
-        _notify_admin_error(bot, callback.from_user.id, url, error_text)
-
-
-# ═══════════════════════════════════════════════════
-# Callback: Quality selection (ql:best:hash / ql:medium:hash / ql:low:hash)
+# Callback: Quality/format selection (ql:<height>:<hash> or ql:mp3:<hash>)
 # ═══════════════════════════════════════════════════
 @router.callback_query(F.data.startswith("ql:"))
 async def handle_quality_callback(callback: CallbackQuery, bot: Bot):
@@ -336,7 +234,8 @@ async def handle_quality_callback(callback: CallbackQuery, bot: Bot):
     if len(parts) != 3:
         return
 
-    _, quality, url_hash = parts
+    _, height_or_mp3, url_hash = parts
+
     url = _get_cached_url(url_hash)
     if not url:
         try:
@@ -346,12 +245,19 @@ async def handle_quality_callback(callback: CallbackQuery, bot: Bot):
         return
 
     platform = "youtube" if YOUTUBE_RE.search(url) else "instagram"
+    is_audio = (height_or_mp3 == "mp3")
 
-    # Show processing message
-    quality_name = {"best": "Original", "medium": "O'rtacha", "low": "Kichik"}.get(quality, quality)
+    if is_audio:
+        quality_label = "MP3"
+        height = 0
+    else:
+        height = int(height_or_mp3)
+        quality_label = f"{height}p"
+
+    # Show download progress
     try:
         await callback.message.edit_text(
-            msg.QUALITY_PROCESSING.format(quality=quality_name),
+            f"⏳ {quality_label} yuklanmoqda...",
             parse_mode="HTML",
         )
     except Exception:
@@ -360,12 +266,13 @@ async def handle_quality_callback(callback: CallbackQuery, bot: Bot):
     try:
         await _process_download(
             bot, callback.message.chat.id, callback.from_user.id,
-            url, platform, is_audio=False, quality=quality,
+            url, platform,
+            is_audio=is_audio, height=height,
             status_msg=callback.message,
         )
     except Exception as e:
         error_text = str(e)
-        logger.error(f"Quality download error for {url}: {error_text}")
+        logger.error(f"Download error for {url}: {error_text}")
         try:
             await callback.message.edit_text(msg.ERROR_DOWNLOAD_FAILED, parse_mode="HTML")
         except Exception:
@@ -379,19 +286,18 @@ async def handle_quality_callback(callback: CallbackQuery, bot: Bot):
 async def _process_download(
     bot: Bot, chat_id: int, user_id: int,
     url: str, platform: str,
-    is_audio: bool, quality: str,
+    is_audio: bool, height: int,
     status_msg: types.Message,
 ):
     """Download and send media to user."""
     file_path = None
-    recompressed = None
     download_dir = None
 
     try:
-        await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
+        await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO if not is_audio else ChatAction.UPLOAD_VOICE)
 
         if platform == "youtube":
-            result = await yt_downloader.download(url, audio_only=is_audio, quality=quality)
+            result = await yt_downloader.download(url, audio_only=is_audio, height=height)
             file_path = result["file_path"]
             title = result["title"]
             duration_str = result.get("duration_str", "")
@@ -401,7 +307,6 @@ async def _process_download(
         else:  # instagram
             result = await ig_downloader.download(url, audio_only=is_audio)
             download_dir = result.get("download_dir")
-            # Instagram may return multiple files, process first one
             if result["files"]:
                 first = result["files"][0]
                 file_path = first["file_path"]
@@ -420,19 +325,7 @@ async def _process_download(
 
         file_size = os.path.getsize(file_path)
 
-        # Recompress if needed (medium/low quality for >50MB files)
-        if quality in ("medium", "low") and media_type == "video":
-            recomp = await media_processor.recompress_video(file_path, quality)
-            recompressed = recomp["file_path"] if recomp["was_compressed"] else None
-            if recompressed:
-                file_size = recomp["file_size"]
-                actual_path = recompressed
-            else:
-                actual_path = file_path
-        else:
-            actual_path = file_path
-
-        # Check if file exceeds Telegram document limit (~2 GB)
+        # Check 2 GB limit
         if file_size > TELEGRAM_DOCUMENT_LIMIT:
             try:
                 await status_msg.edit_text(msg.ERROR_FILE_TOO_LARGE, parse_mode="HTML")
@@ -442,11 +335,11 @@ async def _process_download(
 
         # Build caption
         caption = _make_caption(title, duration_str, file_size, media_type)
-        input_file = FSInputFile(actual_path)
+        input_file = FSInputFile(file_path)
 
-        await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
+        await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO if media_type == "video" else ChatAction.UPLOAD_VOICE)
 
-        # Send based on size and type
+        # ─── Send based on type and size ─────────
         if media_type == "audio":
             if file_size <= TELEGRAM_VIDEO_LIMIT:
                 await bot.send_audio(
@@ -468,6 +361,7 @@ async def _process_download(
                     supports_streaming=True,
                 )
             else:
+                # >50 MB → send as document (supports up to 2 GB)
                 await bot.send_document(
                     chat_id, document=input_file, caption=caption,
                     parse_mode="HTML",
@@ -493,14 +387,10 @@ async def _process_download(
         logger.info(f"Delivered {media_type} ({_format_size(file_size)}) to user {user_id}")
 
     finally:
-        # Cleanup
         if platform == "youtube" and file_path:
             yt_downloader.cleanup(file_path)
         elif platform == "instagram" and download_dir:
             ig_downloader.cleanup(download_dir)
-
-        if recompressed:
-            media_processor._safe_remove(recompressed)
 
 
 def _notify_admin_error(bot: Bot, user_id: int, url: str, error: str):
@@ -527,7 +417,7 @@ def _notify_admin_error(bot: Bot, user_id: int, url: str, error: str):
 # ═══════════════════════════════════════════════════
 @router.message(F.text)
 async def handle_message(message: types.Message, bot: Bot):
-    """Handle incoming text messages — detect URLs, show format buttons instantly."""
+    """Handle incoming text messages — detect URL, fetch formats, show quality buttons."""
     text = message.text.strip()
     urls = extract_urls(text)
 
@@ -544,9 +434,40 @@ async def handle_message(message: types.Message, bot: Bot):
         url_h = _url_hash(url)
         _cache_url(url_h, url)
 
-        # Show format buttons INSTANTLY
-        platform_icon = "▶️ YouTube" if platform == "youtube" else "📸 Instagram"
-        caption = f"{platform_icon}\n\n{msg.CHOOSE_FORMAT}"
-        keyboard = _make_format_keyboard(url_h)
+        # Show "loading" message
+        status_msg = await message.answer(msg.FETCHING_FORMATS, parse_mode="HTML")
 
-        await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
+        try:
+            if platform == "youtube":
+                formats = await yt_downloader.get_formats(url)
+                qualities = formats.get("qualities", [])
+                mp3_size = formats.get("mp3_size", 0)
+                title = formats.get("title", "Video")
+            else:
+                # Instagram: just offer Video / MP3
+                info = await ig_downloader.get_info(url)
+                estimated_size = info.get("estimated_size", 0)
+                title = info.get("title", "Instagram media")
+                qualities = [{"label": "Video", "height": 0, "icon": "🎬", "size": estimated_size}]
+                mp3_size = 0
+
+            if not qualities:
+                # Fallback: no format info available, offer basic download
+                qualities = [{"label": "Video", "height": 0, "icon": "🎬", "size": 0}]
+
+            keyboard = _make_quality_keyboard(url_h, qualities, mp3_size)
+            header = msg.QUALITY_HEADER.format(title=html_lib.escape(title[:100]))
+
+            try:
+                await status_msg.edit_text(header, parse_mode="HTML", reply_markup=keyboard)
+            except Exception:
+                pass
+
+        except Exception as e:
+            error_text = str(e)
+            logger.error(f"Format fetch error for {url}: {error_text}")
+            try:
+                await status_msg.edit_text(msg.ERROR_DOWNLOAD_FAILED, parse_mode="HTML")
+            except Exception:
+                pass
+            _notify_admin_error(bot, message.from_user.id, url, error_text)

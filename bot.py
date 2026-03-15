@@ -101,9 +101,7 @@ async def main():
 
     # Inject worker pool into handlers
     from handlers.admin import set_worker_pool as admin_set_pool
-    from handlers.download import set_worker_pool as download_set_pool
     admin_set_pool(worker_pool)
-    download_set_pool(worker_pool)
 
     # Register routers (order matters — start first, then admin, then download)
     dp.include_router(start_router)

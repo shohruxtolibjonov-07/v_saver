@@ -6,13 +6,12 @@ WELCOME = (
     "🎬 <b>Media Yuklovchi Botga Xush Kelibsiz!</b>\n\n"
     "Men Instagram va YouTube'dan media fayllarni yuklab beraman.\n\n"
     "📌 <b>Qanday foydalanish:</b>\n"
-    "Menga shunchaki havola (link) yuboring:\n\n"
+    "Menga shunchaki havola (link) yuboring — barcha sifat variantlari "
+    "hajmi bilan ko'rsatiladi!\n\n"
     "▶️ YouTube video yoki Shorts\n"
     "📸 Instagram post, reel\n\n"
-    "🎬 Video yoki 🎧 Audio formatni tanlash tugmalari paydo bo'ladi!\n\n"
     "🎧 <b>Videodan musiqa ajratish:</b>\n"
     "Menga istalgan video faylni yuboring — men undan audioni ajratib beraman!\n\n"
-    "✅ Men eng yaxshi sifatni avtomatik tanlayman!\n\n"
     "⚖️ /terms — Foydalanish shartlari"
 )
 
@@ -27,11 +26,10 @@ HELP = (
     "/terms — Foydalanish shartlari\n"
     "/report — Mualliflik huquqi buzilishi haqida xabar berish\n\n"
     "💡 <b>Maslahatlar:</b>\n"
-    "• Bir xabarda bir nechta havola yuborishingiz mumkin\n"
-    "• Havola yuborganingizda 🎬 Video va 🎧 Audio tugmalari paydo bo'ladi\n"
-    "• Bot avtomatik ravishda eng yaxshi sifatni tanlaydi\n"
-    "• Katta fayllar (>50 MB) uchun sifat tanlash imkoniyati beriladi\n\n"
-    "• Bot avtomatik ravishda eng yaxshi sifatni tanlaydi\n\n"
+    "• Havola yuborganingizda barcha sifat variantlari paydo bo'ladi\n"
+    "• Har bir sifat yonida taxminiy hajm ko'rsatiladi\n"
+    "• 50 MB gacha — video sifatida (inline play)\n"
+    "• 50 MB dan ortiq — document sifatida yuklanadi\n\n"
     "🎧 <b>Videodan musiqa ajratish:</b>\n"
     "Menga istalgan video faylni yuboring va men undan\n"
     "audioni MP3 formatida ajratib beraman!"
@@ -63,17 +61,16 @@ REPORT_INFO = (
 )
 
 # ─── Inline button flow ─────────────────────────
-CHOOSE_FORMAT = "Yuklab olish formatini tanlang ↓"
+FETCHING_FORMATS = "🔍 Sifat variantlari yuklanmoqda..."
 DOWNLOADING_VIDEO = "⏳ Video yuklanmoqda..."
 DOWNLOADING_AUDIO = "⏳ Audio yuklanmoqda..."
 CHECKING_INFO = "🔍 Ma'lumotlar tekshirilmoqda..."
 
-# ─── Quality selection (>50 MB) ─────────────────
-QUALITY_CHOICE = (
-    "📁 <b>Fayl hajmi:</b> {size}\n\n"
-    "Fayl katta. Sifatni tanlang:"
+# ─── Quality selection header ───────────────────
+QUALITY_HEADER = (
+    "<b>{title}</b>\n\n"
+    "Yuklab olish formatini tanlang ↓"
 )
-QUALITY_PROCESSING = "⚙️ {quality} sifatda tayyorlanmoqda..."
 
 # ─── Audio extraction ───────────────────────────
 AUDIO_EXTRACTING = "🎧 Videodan audio ajratilmoqda..."
@@ -84,11 +81,7 @@ AUDIO_EXTRACT_TOO_LARGE = "❌ Video fayl juda katta. Iltimos, 50 MB dan kichik 
 ERROR_GENERIC = "❌ Xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
 ERROR_INVALID_URL = "⚠️ Noto'g'ri havola. Iltimos, YouTube yoki Instagram havolasini yuboring."
 ERROR_DOWNLOAD_FAILED = "❌ Yuklab olishda xatolik. Havola to'g'ri ekanligini tekshiring."
-ERROR_FILE_TOO_LARGE = (
-    "❌ Fayl juda katta va Telegram orqali yuborib bo'lmaydi.\n"
-    "Iltimos, pastroq sifatni tanlang yoki kichikroq video sinab ko'ring."
-)
-ERROR_FILE_TOO_LARGE = "❌ Fayl juda katta (2 GB dan oshadi). Iltimos, kichikroq fayl yuboring."
+ERROR_FILE_TOO_LARGE = "❌ Fayl juda katta (2 GB dan oshadi). Iltimos, kichikroq sifatni tanlang."
 ERROR_INSTAGRAM_PRIVATE = "🔒 Bu Instagram akkaunt yopiq. Yopiq kontentni yuklab bo'lmaydi."
 ERROR_INSTAGRAM_STORY = "📛 Instagram story'larni yuklab bo'lmaydi — ular faqat tizimga kirgan foydalanuvchilarga ko'rinadi."
 ERROR_NOT_FOUND = "🔍 Media topilmadi. Havola hali ham amal qilishini tekshiring."
