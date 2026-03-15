@@ -10,8 +10,8 @@ import html as html_lib
 from aiogram import Router, types, Bot, F
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.enums import ChatAction
+
 from config import ADMIN_ID, TELEGRAM_VIDEO_LIMIT, TELEGRAM_DOCUMENT_LIMIT, TEMP_DIR, BOT_USERNAME
-from config import ADMIN_ID, MAX_TELEGRAM_FILE_SIZE, TELEGRAM_VIDEO_LIMIT, TEMP_DIR
 from utils import messages as msg
 from services.youtube import YouTubeDownloader
 from services.instagram import InstagramDownloader
@@ -384,8 +384,8 @@ async def _process_download(
 ):
     """Download and send media to user."""
     file_path = None
-    processed = None
     recompressed = None
+    download_dir = None
 
     try:
         await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
@@ -400,6 +400,7 @@ async def _process_download(
 
         else:  # instagram
             result = await ig_downloader.download(url, audio_only=is_audio)
+            download_dir = result.get("download_dir")
             # Instagram may return multiple files, process first one
             if result["files"]:
                 first = result["files"][0]
@@ -453,98 +454,6 @@ async def _process_download(
                     parse_mode="HTML", title=title[:64],
                     duration=duration,
                 )
-        dur = result.get("duration_str", "")
-        caption = f"🎬 <b>{html_lib.escape(result['title'][:200])}</b>"
-        if dur:
-            caption += f"\n⏱ {dur}"
-        caption += f"\n📦 {_format_size(processed['file_size'])}"
-
-        input_file = FSInputFile(processed["file_path"])
-
-        # 50 MB dan kichik bo'lsa — video/audio sifatida yuboramiz (inline play)
-        # 50 MB dan katta bo'lsa — document sifatida yuboramiz (Telegram 2 GB gacha qabul qiladi)
-        if result["media_type"] == "audio":
-            if processed["file_size"] <= TELEGRAM_VIDEO_LIMIT:
-                await bot.send_audio(
-                    chat_id, audio=input_file, caption=caption,
-                    parse_mode="HTML", title=result["title"][:64],
-                    duration=result.get("duration"),
-                )
-            else:
-                await bot.send_document(
-                    chat_id, document=input_file, caption=caption,
-                    parse_mode="HTML",
-                )
-        else:
-            if processed["file_size"] <= TELEGRAM_VIDEO_LIMIT:
-                await bot.send_video(
-                    chat_id, video=input_file, caption=caption,
-                    parse_mode="HTML", duration=result.get("duration"),
-                    supports_streaming=True,
-                )
-            else:
-                await bot.send_document(
-                    chat_id, document=input_file, caption=caption,
-                    parse_mode="HTML",
-                )
-
-        # Delete status message
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
-
-    finally:
-        if file_path:
-            yt_downloader.cleanup(file_path)
-        if processed and processed.get("file_path") != file_path:
-            media_processor._safe_remove(processed["file_path"])
-
-
-async def _process_instagram_direct(bot: Bot, chat_id: int, user_id: int, url: str, is_audio: bool, status_msg: types.Message):
-    """Process Instagram download directly (no queue)."""
-    download_dir = None
-
-    try:
-        result = await ig_downloader.download(url, audio_only=is_audio)
-        download_dir = result.get("download_dir")
-
-        if not result["files"]:
-            try:
-                await status_msg.edit_text(msg.ERROR_NOT_FOUND, parse_mode="HTML")
-            except Exception:
-                await bot.send_message(chat_id, msg.ERROR_NOT_FOUND, parse_mode="HTML")
-            return
-
-        await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
-
-        for file_info in result["files"]:
-            file_path = file_info["file_path"]
-
-            processed = await media_processor.process_for_telegram(file_path, file_info["media_type"])
-
-            if processed["file_size"] > MAX_TELEGRAM_FILE_SIZE:
-                await bot.send_message(chat_id, msg.ERROR_FILE_TOO_LARGE, parse_mode="HTML")
-                continue
-
-            input_file = FSInputFile(processed["file_path"])
-
-            caption = f"🎬 <b>{html_lib.escape(result.get('title', 'Instagram media')[:200])}</b>"
-            caption += f"\n📦 {_format_size(processed['file_size'])}"
-
-            # 50 MB dan kichik — media sifatida, katta — document sifatida yuborish
-            if file_info["media_type"] == "audio":
-                if processed["file_size"] <= TELEGRAM_VIDEO_LIMIT:
-                    await bot.send_audio(chat_id, audio=input_file, caption=caption, parse_mode="HTML")
-                else:
-                    await bot.send_document(chat_id, document=input_file, caption=caption, parse_mode="HTML")
-            elif file_info["media_type"] == "video":
-                if processed["file_size"] <= TELEGRAM_VIDEO_LIMIT:
-                    await bot.send_video(chat_id, video=input_file, caption=caption, parse_mode="HTML", supports_streaming=True)
-                else:
-                    await bot.send_document(chat_id, document=input_file, caption=caption, parse_mode="HTML")
-            elif file_info["media_type"] == "photo":
-                await bot.send_photo(chat_id, photo=input_file, caption=caption, parse_mode="HTML")
             else:
                 await bot.send_document(
                     chat_id, document=input_file, caption=caption,
@@ -587,8 +496,8 @@ async def _process_instagram_direct(bot: Bot, chat_id: int, user_id: int, url: s
         # Cleanup
         if platform == "youtube" and file_path:
             yt_downloader.cleanup(file_path)
-        elif platform == "instagram" and result and result.get("download_dir"):
-            ig_downloader.cleanup(result["download_dir"])
+        elif platform == "instagram" and download_dir:
+            ig_downloader.cleanup(download_dir)
 
         if recompressed:
             media_processor._safe_remove(recompressed)
