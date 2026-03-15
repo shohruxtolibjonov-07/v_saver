@@ -1,3 +1,5 @@
+"""Media processing — recompression and audio extraction."""
+
 import asyncio
 import logging
 import os
@@ -6,18 +8,13 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from config import MAX_TELEGRAM_FILE_SIZE, TEMP_DIR
-
-# FFmpeg settings (used only for compression, optional if ffmpeg is installed)
-FFMPEG_COMPRESS_PRESET = "ultrafast"
-FFMPEG_CRF = 28
-FFMPEG_MAX_RESOLUTION = "1280x720"
+from config import TEMP_DIR
 
 logger = logging.getLogger(__name__)
 
 
 class MediaProcessor:
-    """Handles media compression, optimization, and audio extraction."""
+    """Handles media recompression and audio extraction."""
 
     def __init__(self):
         self.temp_dir = TEMP_DIR / "processed"
@@ -32,7 +29,7 @@ class MediaProcessor:
             proc = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-version",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             await proc.communicate()
             self._ffmpeg_available = proc.returncode == 0
@@ -41,48 +38,79 @@ class MediaProcessor:
         return self._ffmpeg_available
 
     async def process_for_telegram(self, file_path: str, media_type: str) -> dict:
-        """Process a media file for Telegram delivery."""
+        """Return file info without any compression — zero delay."""
         file_size = os.path.getsize(file_path)
-
-        result = {
+        return {
             "file_path": file_path,
             "file_size": file_size,
             "was_compressed": False,
             "media_type": media_type,
         }
 
-        if file_size <= MAX_TELEGRAM_FILE_SIZE:
-            return result
+    async def recompress_video(self, file_path: str, quality: str) -> dict:
+        """Recompress video to target quality. Used for >50MB quality choices."""
+        if not await self.check_ffmpeg():
+            raise Exception("FFMPEG_NOT_AVAILABLE")
 
-        if media_type == "video":
-            compressed = await self._compress_video(file_path)
-            if compressed:
-                result["file_path"] = compressed
-                result["file_size"] = os.path.getsize(compressed)
-                result["was_compressed"] = True
+        if quality == "medium":
+            crf = "28"
+            resolution = "1280x720"
+            audio_bitrate = "128k"
+        elif quality == "low":
+            crf = "33"
+            resolution = "854x480"
+            audio_bitrate = "96k"
+        else:
+            # "best" — no recompression needed
+            return await self.process_for_telegram(file_path, "video")
 
-                if result["file_size"] > MAX_TELEGRAM_FILE_SIZE:
-                    compressed2 = await self._compress_video(file_path, aggressive=True)
-                    if compressed2:
-                        if compressed != file_path:
-                            self._safe_remove(compressed)
-                        result["file_path"] = compressed2
-                        result["file_size"] = os.path.getsize(compressed2)
+        output_name = f"recomp_{uuid.uuid4().hex[:8]}.mp4"
+        output_path = str(self.temp_dir / output_name)
 
-        elif media_type == "audio":
-            compressed = await self._compress_audio(file_path)
-            if compressed:
-                result["file_path"] = compressed
-                result["file_size"] = os.path.getsize(compressed)
-                result["was_compressed"] = True
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", file_path,
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", crf,
+            "-vf", f"scale={resolution}:force_original_aspect_ratio=decrease",
+            "-c:a", "aac",
+            "-b:a", audio_bitrate,
+            "-movflags", "+faststart",
+            output_path,
+        ]
 
-        return result
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+
+            if proc.returncode != 0:
+                logger.error(f"Recompression failed: {stderr.decode()[-300:]}")
+                raise Exception("Qayta siqishda xatolik")
+
+            if not os.path.exists(output_path):
+                raise Exception("Siqilgan fayl yaratilmadi")
+
+            return {
+                "file_path": output_path,
+                "file_size": os.path.getsize(output_path),
+                "was_compressed": True,
+                "media_type": "video",
+            }
+
+        except asyncio.TimeoutError:
+            self._safe_remove(output_path)
+            raise Exception("Qayta siqish juda uzoq davom etdi")
+        except Exception:
+            self._safe_remove(output_path)
+            raise
 
     async def extract_audio_from_video(self, video_path: str, title: str = "audio") -> dict:
-        """
-        Extract audio track from a video file and return as MP3.
-        Used when user sends a video file directly to the bot.
-        """
+        """Extract audio track from a video file as MP3."""
         if not await self.check_ffmpeg():
             raise Exception("FFMPEG_NOT_AVAILABLE")
 
@@ -93,19 +121,19 @@ class MediaProcessor:
         cmd = [
             "ffmpeg", "-y",
             "-i", video_path,
-            "-vn",              # no video
+            "-vn",
             "-c:a", "libmp3lame",
-            "-b:a", "192k",     # good quality audio
-            "-ar", "44100",     # standard sample rate
-            "-ac", "2",         # stereo
-            output_path
+            "-b:a", "192k",
+            "-ar", "44100",
+            "-ac", "2",
+            output_path,
         ]
 
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
@@ -128,78 +156,6 @@ class MediaProcessor:
         except Exception:
             self._safe_remove(output_path)
             raise
-
-    async def _compress_video(self, file_path: str, aggressive: bool = False) -> Optional[str]:
-        """Compress video using ffmpeg."""
-        if not await self.check_ffmpeg():
-            return None
-
-        output_path = str(self.temp_dir / f"compressed_{Path(file_path).name}")
-        crf = str(FFMPEG_CRF + (5 if aggressive else 0))
-        resolution = "854x480" if aggressive else FFMPEG_MAX_RESOLUTION
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", file_path,
-            "-c:v", "libx264",
-            "-preset", FFMPEG_COMPRESS_PRESET,
-            "-crf", crf,
-            "-vf", f"scale={resolution}:force_original_aspect_ratio=decrease",
-            "-c:a", "aac",
-            "-b:a", "96k" if aggressive else "128k",
-            "-movflags", "+faststart",
-            output_path
-        ]
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
-
-            if proc.returncode != 0:
-                logger.error(f"FFmpeg compression error: {stderr.decode()[-500:]}")
-                return None
-            return output_path
-        except asyncio.TimeoutError:
-            logger.error("FFmpeg compression timeout")
-            return None
-        except Exception as e:
-            logger.error(f"FFmpeg error: {e}")
-            return None
-
-    async def _compress_audio(self, file_path: str) -> Optional[str]:
-        """Compress audio using ffmpeg."""
-        if not await self.check_ffmpeg():
-            return None
-
-        output_path = str(self.temp_dir / f"compressed_{Path(file_path).name}")
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", file_path,
-            "-c:a", "libmp3lame",
-            "-b:a", "128k",
-            output_path
-        ]
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-
-            if proc.returncode != 0:
-                logger.error(f"FFmpeg audio compression error: {stderr.decode()[-500:]}")
-                return None
-            return output_path
-        except Exception as e:
-            logger.error(f"FFmpeg audio error: {e}")
-            return None
 
     def _safe_remove(self, path: str):
         try:

@@ -4,17 +4,30 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Bot configuration
+# ─── Bot ────────────────────────────────────────
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+BOT_USERNAME = os.getenv("BOT_USERNAME", "videosaq1a_bot")
 
-# File limits
-MAX_TELEGRAM_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+# ─── Redis ──────────────────────────────────────
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# Temporary download directory
+# ─── File limits ────────────────────────────────
+TELEGRAM_VIDEO_LIMIT = 50 * 1024 * 1024       # 50 MB – send_video/send_audio max
+TELEGRAM_DOCUMENT_LIMIT = 2000 * 1024 * 1024  # ~2 GB – send_document max
+
+# ─── Worker pool ────────────────────────────────
+WORKER_COUNT = int(os.getenv("WORKER_COUNT", "4"))
+JOB_TIMEOUT = int(os.getenv("JOB_TIMEOUT", "600"))  # 10 minutes
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+
+# ─── Rate limiting ──────────────────────────────
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "10"))
+
+# ─── Paths ──────────────────────────────────────
 BASE_DIR = Path(__file__).parent
 TEMP_DIR = BASE_DIR / "temp_downloads"
 TEMP_DIR.mkdir(exist_ok=True)
 
-# Logging
+# ─── Logging ────────────────────────────────────
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

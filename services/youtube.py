@@ -1,12 +1,15 @@
+"""YouTube downloader with format selection and retry support."""
+
 import asyncio
 import logging
 import os
 from pathlib import Path
 from functools import partial
+from typing import Optional
 
 import yt_dlp
 
-from config import TEMP_DIR, MAX_TELEGRAM_FILE_SIZE
+from config import TEMP_DIR, MAX_RETRIES
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +41,13 @@ class YouTubeDownloader:
         self.temp_dir.mkdir(exist_ok=True)
 
     async def get_info(self, url: str) -> dict:
-        """Fetch only metadata (title, thumbnail) without downloading — very fast."""
+        """Fetch metadata (title, size, formats) without downloading."""
         url = url.strip()
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, partial(self._get_info_sync, url))
 
     def _get_info_sync(self, url: str) -> dict:
-        """Synchronous metadata fetch."""
+        """Synchronous metadata + estimated size fetch."""
         opts = {
             **_BASE_OPTS,
             "skip_download": True,
@@ -53,41 +56,97 @@ class YouTubeDownloader:
             info = ydl.extract_info(url, download=False)
             if not info:
                 raise Exception("Video ma'lumotlarini olishda xatolik")
+
+            # Estimate best video size
+            best_video_size = self._estimate_size(info, audio_only=False)
+            best_audio_size = self._estimate_size(info, audio_only=True)
+
             return {
                 "title": info.get("title", "Video"),
                 "thumbnail": info.get("thumbnail"),
                 "duration": info.get("duration") or 0,
                 "duration_str": self._format_duration(info.get("duration") or 0),
                 "uploader": info.get("uploader", ""),
+                "video_size": best_video_size,
+                "audio_size": best_audio_size,
             }
 
-    async def download(self, url: str, audio_only: bool = False) -> dict:
+    def _estimate_size(self, info: dict, audio_only: bool = False) -> int:
+        """Estimate file size from format info."""
+        formats = info.get("formats", [])
+        if not formats:
+            # Fallback: estimate from duration and bitrate
+            duration = info.get("duration") or 0
+            if audio_only:
+                return int(duration * 16000)  # ~128kbps
+            return int(duration * 500000)  # ~4Mbps
+
+        if audio_only:
+            # Find best audio format size
+            audio_formats = [f for f in formats if f.get("acodec") != "none" and f.get("vcodec") in (None, "none")]
+            if audio_formats:
+                best = max(audio_formats, key=lambda f: f.get("filesize") or f.get("filesize_approx") or 0)
+                return best.get("filesize") or best.get("filesize_approx") or 0
+        else:
+            # Find best combined format size
+            # Try filesize first
+            if info.get("filesize"):
+                return info["filesize"]
+            if info.get("filesize_approx"):
+                return info["filesize_approx"]
+
+            # Check best format
+            best_formats = [f for f in formats if f.get("ext") == "mp4" and f.get("vcodec") != "none"]
+            if best_formats:
+                best = max(best_formats, key=lambda f: (f.get("height") or 0))
+                size = best.get("filesize") or best.get("filesize_approx") or 0
+                # If combined format (has audio), return as-is
+                if best.get("acodec") != "none":
+                    return size
+                # If video-only, add estimated audio size
+                audio_size = self._estimate_size(info, audio_only=True)
+                return size + audio_size
+
+        return 0
+
+    async def download(self, url: str, audio_only: bool = False, quality: str = "best") -> dict:
         """Download media from YouTube."""
         url = url.strip()
         loop = asyncio.get_event_loop()
         if audio_only:
             return await loop.run_in_executor(None, partial(self._download_audio, url))
         else:
-            return await loop.run_in_executor(None, partial(self._download_video, url))
+            return await loop.run_in_executor(None, partial(self._download_video, url, quality))
 
-    def _download_video(self, url: str) -> dict:
-        """Download video — optimized for speed."""
+    def _download_video(self, url: str, quality: str = "best") -> dict:
+        """Download video — format depends on quality choice."""
+        format_str = self._get_video_format(quality)
+
         ydl_opts = {
             **_BASE_OPTS,
-            "format": "best[ext=mp4][filesize<50M]/best[ext=mp4][height<=720]/best[ext=mp4]/best[height<=720]/best",
+            "format": format_str,
             "outtmpl": str(self.temp_dir / "%(id)s.%(ext)s"),
             "merge_output_format": "mp4",
             "postprocessors": [],
         }
         return self._do_download(url, ydl_opts, "video")
 
+    def _get_video_format(self, quality: str) -> str:
+        """Get yt-dlp format string for quality level."""
+        if quality == "low":
+            return "best[ext=mp4][height<=360]/best[height<=360]/worst[ext=mp4]/worst"
+        elif quality == "medium":
+            return "best[ext=mp4][height<=480]/best[ext=mp4][height<=720]/best[height<=480]/best"
+        else:  # "best"
+            return "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
+
     def _download_audio(self, url: str) -> dict:
-        """Download audio only — no ffmpeg needed, downloads native format."""
+        """Download audio only — native format, no ffmpeg."""
         ydl_opts = {
             **_BASE_OPTS,
             "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
             "outtmpl": str(self.temp_dir / "%(id)s.%(ext)s"),
-            "postprocessors": [],  # No ffmpeg postprocessing
+            "postprocessors": [],
         }
         return self._do_download(url, ydl_opts, "audio")
 

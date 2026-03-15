@@ -6,6 +6,9 @@ services:
       - .env
     volumes:
       - bot_temp:/app/temp_downloads
+    depends_on:
+      redis:
+        condition: service_healthy
     logging:
       driver: json-file
       options:
@@ -14,7 +17,24 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1G
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
 volumes:
   bot_temp:
+  redis_data:

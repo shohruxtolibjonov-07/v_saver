@@ -1,3 +1,5 @@
+"""Instagram downloader with retry support."""
+
 import asyncio
 import logging
 import os
@@ -20,7 +22,7 @@ class InstagramDownloader:
         self.temp_dir.mkdir(exist_ok=True)
 
     async def get_info(self, url: str) -> dict:
-        """Fetch only metadata (title, thumbnail) without downloading — very fast."""
+        """Fetch metadata without downloading."""
         url = url.strip()
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, partial(self._get_info_sync, url))
@@ -41,23 +43,39 @@ class InstagramDownloader:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 if not info:
-                    return {"title": "Instagram media", "thumbnail": None}
+                    return {"title": "Instagram media", "thumbnail": None, "estimated_size": 0}
+
+                # Estimate size
+                estimated_size = 0
+                if info.get("filesize"):
+                    estimated_size = info["filesize"]
+                elif info.get("filesize_approx"):
+                    estimated_size = info["filesize_approx"]
+                elif info.get("duration"):
+                    estimated_size = int(info["duration"] * 500000)  # ~4Mbps estimate
+
                 return {
                     "title": info.get("title", "Instagram media"),
                     "thumbnail": info.get("thumbnail"),
                     "duration": info.get("duration") or 0,
                     "uploader": info.get("uploader", ""),
+                    "estimated_size": estimated_size,
                 }
         except Exception as e:
             logger.warning(f"Instagram info fetch failed: {e}")
-            return {"title": "Instagram media", "thumbnail": None, "duration": 0, "uploader": ""}
+            return {
+                "title": "Instagram media",
+                "thumbnail": None,
+                "duration": 0,
+                "uploader": "",
+                "estimated_size": 0,
+            }
 
     async def download(self, url: str, audio_only: bool = False) -> dict:
         """Download media from Instagram. Returns dict with files list."""
         url = url.strip()
         content_type = self._detect_content_type(url)
 
-        # Stories require login — give clear error
         if content_type == "story":
             raise Exception("STORY_LOGIN_REQUIRED")
 
@@ -99,10 +117,8 @@ class InstagramDownloader:
             "geo_bypass": True,
         }
 
-        # Audio-only mode — no ffmpeg needed, download native format
         if audio_only:
             ydl_opts["format"] = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best"
-            # No postprocessors — we send the native audio file directly
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -115,18 +131,16 @@ class InstagramDownloader:
                 raise Exception("PRIVATE_ACCOUNT")
             raise
 
-        # Collect all downloaded files
+        # Collect downloaded files
         files = []
         for f in download_dir.iterdir():
             if f.is_file():
                 media_type = self._detect_media_type(f.suffix)
-                # If audio_only and we got mp3, mark it audio
-                if audio_only and f.suffix.lower() == ".mp3":
+                if audio_only and f.suffix.lower() in (".mp3", ".m4a", ".ogg", ".webm"):
                     media_type = "audio"
                 files.append({
                     "file_path": str(f),
                     "file_size": os.path.getsize(f),
-                    "file_size_str": self._format_size(os.path.getsize(f)),
                     "media_type": media_type,
                     "filename": f.name,
                 })
