@@ -1,4 +1,4 @@
-"""Instagram downloader with retry support."""
+"""Instagram downloader — simplified, no quality selection needed."""
 
 import asyncio
 import logging
@@ -15,73 +15,20 @@ logger = logging.getLogger(__name__)
 
 
 class InstagramDownloader:
-    """Downloads media from Instagram using yt-dlp Python API."""
+    """Downloads media from Instagram using yt-dlp."""
 
     def __init__(self):
         self.temp_dir = TEMP_DIR / "instagram"
         self.temp_dir.mkdir(exist_ok=True)
 
-    async def get_info(self, url: str) -> dict:
-        """Fetch metadata without downloading."""
-        url = url.strip()
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(self._get_info_sync, url))
-
-    def _get_info_sync(self, url: str) -> dict:
-        """Synchronous metadata fetch."""
-        opts = {
-            "noplaylist": True,
-            "no_warnings": True,
-            "quiet": True,
-            "socket_timeout": 30,
-            "retries": 5,
-            "skip_download": True,
-            "no_check_certificates": True,
-            "geo_bypass": True,
-        }
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if not info:
-                    return {"title": "Instagram media", "thumbnail": None, "estimated_size": 0}
-
-                # Estimate size
-                estimated_size = 0
-                if info.get("filesize"):
-                    estimated_size = info["filesize"]
-                elif info.get("filesize_approx"):
-                    estimated_size = info["filesize_approx"]
-                elif info.get("duration"):
-                    estimated_size = int(info["duration"] * 500000)  # ~4Mbps estimate
-
-                return {
-                    "title": info.get("title", "Instagram media"),
-                    "thumbnail": info.get("thumbnail"),
-                    "duration": info.get("duration") or 0,
-                    "uploader": info.get("uploader", ""),
-                    "estimated_size": estimated_size,
-                }
-        except Exception as e:
-            logger.warning(f"Instagram info fetch failed: {e}")
-            return {
-                "title": "Instagram media",
-                "thumbnail": None,
-                "duration": 0,
-                "uploader": "",
-                "estimated_size": 0,
-            }
-
     async def download(self, url: str, audio_only: bool = False) -> dict:
-        """Download media from Instagram. Returns dict with files list."""
+        """Download media from Instagram."""
         url = url.strip()
         content_type = self._detect_content_type(url)
 
-        if content_type == "story":
-            raise Exception("STORY_LOGIN_REQUIRED")
-
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, partial(self._download_with_ytdlp, url, content_type, audio_only)
+            None, partial(self._download_sync, url, content_type, audio_only)
         )
 
     def _detect_content_type(self, url: str) -> str:
@@ -95,8 +42,8 @@ class InstagramDownloader:
             return "tv"
         return "unknown"
 
-    def _download_with_ytdlp(self, url: str, content_type: str, audio_only: bool = False) -> dict:
-        """Download Instagram content using yt-dlp Python API."""
+    def _download_sync(self, url: str, content_type: str, audio_only: bool = False) -> dict:
+        """Download Instagram content."""
         download_id = str(uuid.uuid4())[:8]
         download_dir = self.temp_dir / download_id
         download_dir.mkdir(exist_ok=True)
@@ -127,16 +74,20 @@ class InstagramDownloader:
                     raise Exception("Instagram ma'lumotlarini olishda xatolik")
         except yt_dlp.utils.DownloadError as e:
             error_msg = str(e).lower()
-            if "login" in error_msg or "private" in error_msg:
+            # Only flag as private if clearly stated
+            if "login required" in error_msg and "private" in error_msg:
                 raise Exception("PRIVATE_ACCOUNT")
-            raise
+            if "story" in error_msg and "login" in error_msg:
+                raise Exception("STORY_LOGIN_REQUIRED")
+            # Re-raise all other download errors as-is
+            raise Exception(f"Instagram yuklab olishda xatolik: {str(e)[:200]}")
 
         # Collect downloaded files
         files = []
         for f in download_dir.iterdir():
             if f.is_file():
                 media_type = self._detect_media_type(f.suffix)
-                if audio_only and f.suffix.lower() in (".mp3", ".m4a", ".ogg", ".webm"):
+                if audio_only:
                     media_type = "audio"
                 files.append({
                     "file_path": str(f),
@@ -167,14 +118,6 @@ class InstagramDownloader:
         elif ext in (".mp3", ".m4a", ".ogg", ".wav", ".aac"):
             return "audio"
         return "document"
-
-    @staticmethod
-    def _format_size(size_bytes: int) -> str:
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        return f"{size_bytes / (1024 * 1024):.1f} MB"
 
     def cleanup(self, download_dir: str):
         import shutil
