@@ -12,6 +12,10 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "videosaq1a_bot")
 # ─── Redis ──────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# File limits
+MAX_TELEGRAM_FILE_SIZE = 2000 * 1024 * 1024  # ~2 GB (Telegram document limit)
+TELEGRAM_VIDEO_LIMIT = 50 * 1024 * 1024  # 50 MB — send_video/send_audio limit
+
 # ─── File limits ────────────────────────────────
 TELEGRAM_VIDEO_LIMIT = 50 * 1024 * 1024       # 50 MB – send_video/send_audio max
 TELEGRAM_DOCUMENT_LIMIT = 2000 * 1024 * 1024  # ~2 GB – send_document max

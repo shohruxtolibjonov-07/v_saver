@@ -125,6 +125,7 @@ class YouTubeDownloader:
         ydl_opts = {
             **_BASE_OPTS,
             "format": format_str,
+            "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
             "outtmpl": str(self.temp_dir / "%(id)s.%(ext)s"),
             "merge_output_format": "mp4",
             "postprocessors": [],

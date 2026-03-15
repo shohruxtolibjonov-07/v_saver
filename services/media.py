@@ -46,7 +46,6 @@ class MediaProcessor:
             "was_compressed": False,
             "media_type": media_type,
         }
-
     async def recompress_video(self, file_path: str, quality: str) -> dict:
         """Recompress video to target quality. Used for >50MB quality choices."""
         if not await self.check_ffmpeg():
@@ -108,7 +107,8 @@ class MediaProcessor:
         except Exception:
             self._safe_remove(output_path)
             raise
-
+        # Siqish olib tashlandi — tezlik uchun fayl to'g'ridan-to'g'ri yuboriladi
+        return result
     async def extract_audio_from_video(self, video_path: str, title: str = "audio") -> dict:
         """Extract audio track from a video file as MP3."""
         if not await self.check_ffmpeg():

@@ -31,6 +31,7 @@ HELP = (
     "• Havola yuborganingizda 🎬 Video va 🎧 Audio tugmalari paydo bo'ladi\n"
     "• Bot avtomatik ravishda eng yaxshi sifatni tanlaydi\n"
     "• Katta fayllar (>50 MB) uchun sifat tanlash imkoniyati beriladi\n\n"
+    "• Bot avtomatik ravishda eng yaxshi sifatni tanlaydi\n\n"
     "🎧 <b>Videodan musiqa ajratish:</b>\n"
     "Menga istalgan video faylni yuboring va men undan\n"
     "audioni MP3 formatida ajratib beraman!"
@@ -87,6 +88,7 @@ ERROR_FILE_TOO_LARGE = (
     "❌ Fayl juda katta va Telegram orqali yuborib bo'lmaydi.\n"
     "Iltimos, pastroq sifatni tanlang yoki kichikroq video sinab ko'ring."
 )
+ERROR_FILE_TOO_LARGE = "❌ Fayl juda katta (2 GB dan oshadi). Iltimos, kichikroq fayl yuboring."
 ERROR_INSTAGRAM_PRIVATE = "🔒 Bu Instagram akkaunt yopiq. Yopiq kontentni yuklab bo'lmaydi."
 ERROR_INSTAGRAM_STORY = "📛 Instagram story'larni yuklab bo'lmaydi — ular faqat tizimga kirgan foydalanuvchilarga ko'rinadi."
 ERROR_NOT_FOUND = "🔍 Media topilmadi. Havola hali ham amal qilishini tekshiring."
