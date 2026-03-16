@@ -115,12 +115,16 @@ def _make_ig_keyboard(url_hash: str) -> InlineKeyboardMarkup:
 
 
 def _make_yt_quality_keyboard(url_hash: str, qualities: list, mp3_size: int) -> InlineKeyboardMarkup:
-    """YouTube: quality buttons with sizes (3 per row)."""
+    """YouTube: quality buttons with sizes (3 per row). Warns if >50MB."""
+    limit = TELEGRAM_DOCUMENT_LIMIT
     rows = []
     row = []
     for q in qualities:
         size_str = _format_size(q["size"])
-        label = f"{q['icon']} {q['label']}"
+        # Show warning icon if estimated size > Telegram limit
+        over_limit = q["size"] > limit and q["size"] > 0
+        icon = "⚠️" if over_limit else q["icon"]
+        label = f"{icon} {q['label']}"
         if size_str:
             label += f":  {size_str}"
         callback = f"yt:{q['height']}:{url_hash}"
@@ -349,6 +353,12 @@ async def handle_ig_callback(callback: CallbackQuery, bot: Bot):
             err = msg.ERROR_INSTAGRAM_PRIVATE
         elif "STORY_LOGIN" in error_text:
             err = msg.ERROR_INSTAGRAM_STORY
+        elif "LOGIN_REQUIRED" in error_text:
+            err = "🔒 Bu kontentni yuklab olish uchun Instagram login talab qiladi.\nOmmaviy postlar va reels'larni yuboring."
+        elif "RATE_LIMITED" in error_text:
+            err = "⏱ Instagram vaqtinchalik cheklov qo'ydi. Iltimos, bir necha daqiqadan keyin qayta urinib ko'ring."
+        elif "CONTENT_NOT_AVAILABLE" in error_text:
+            err = "🔍 Bu kontent mavjud emas yoki o'chirilgan."
         else:
             err = msg.ERROR_DOWNLOAD_FAILED
 
@@ -406,8 +416,14 @@ async def handle_yt_callback(callback: CallbackQuery, bot: Bot):
         file_size = result["file_size"]
 
         if file_size > TELEGRAM_DOCUMENT_LIMIT:
+            size_str = _format_size(file_size)
             try:
-                await callback.message.edit_text(msg.ERROR_FILE_TOO_LARGE, parse_mode="HTML")
+                await callback.message.edit_text(
+                    f"⚠️ Fayl juda katta: <b>{size_str}</b>\n"
+                    f"Telegram limiti: 50 MB\n\n"
+                    f"💡 Kichikroq sifatni tanlang yoki 🎧 MP3 ni bosing.",
+                    parse_mode="HTML",
+                )
             except Exception:
                 pass
             return

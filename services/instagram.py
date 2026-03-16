@@ -79,11 +79,17 @@ class InstagramDownloader:
                     raise Exception("Instagram ma'lumotlarini olishda xatolik")
         except yt_dlp.utils.DownloadError as e:
             error_msg = str(e).lower()
-            # Only flag as private if clearly stated
-            if "login required" in error_msg and "private" in error_msg:
+            # Handle specific Instagram errors with user-friendly messages
+            if "private" in error_msg:
                 raise Exception("PRIVATE_ACCOUNT")
             if "story" in error_msg and "login" in error_msg:
                 raise Exception("STORY_LOGIN_REQUIRED")
+            if "login required" in error_msg or "log in" in error_msg:
+                raise Exception("LOGIN_REQUIRED")
+            if "rate" in error_msg and "limit" in error_msg:
+                raise Exception("RATE_LIMITED")
+            if "not available" in error_msg or "not found" in error_msg or "does not exist" in error_msg:
+                raise Exception("CONTENT_NOT_AVAILABLE")
             # Re-raise all other download errors as-is
             raise Exception(f"Instagram yuklab olishda xatolik: {str(e)[:200]}")
 

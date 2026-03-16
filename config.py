@@ -13,8 +13,10 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "videosaq1a_bot")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # ─── File limits ────────────────────────────────
-TELEGRAM_VIDEO_LIMIT = 50 * 1024 * 1024       # 50 MB – send_video/send_audio max
-TELEGRAM_DOCUMENT_LIMIT = 2000 * 1024 * 1024  # ~2 GB – send_document max
+# Telegram Cloud Bot API limit: 50 MB for ALL upload methods
+# (send_video, send_audio, send_document — hammasi 50 MB)
+TELEGRAM_VIDEO_LIMIT = 50 * 1024 * 1024       # 50 MB – inline video playback
+TELEGRAM_DOCUMENT_LIMIT = 50 * 1024 * 1024    # 50 MB – cloud Bot API hard limit
 
 # ─── Worker pool ────────────────────────────────
 WORKER_COUNT = int(os.getenv("WORKER_COUNT", "4"))
