@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 from functools import partial
+from concurrent.futures import ThreadPoolExecutor
 
 import yt_dlp
 
@@ -12,23 +13,36 @@ from config import TEMP_DIR, MAX_RETRIES
 
 logger = logging.getLogger(__name__)
 
-# Reusable base options for speed
+# Dedicated thread pool for CPU-bound yt-dlp work (avoids GIL contention with bot)
+_dl_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ytdl")
+
+# Reusable base options — speed-tuned
 _BASE_OPTS = {
     "noplaylist": True,
     "no_warnings": True,
     "quiet": True,
     "noprogress": True,
-    "socket_timeout": 30,
-    "retries": 3,
-    "fragment_retries": 3,
-    "concurrent_fragment_downloads": 8,
+    "socket_timeout": 20,
+    "retries": 5,
+    "fragment_retries": 5,
+    "concurrent_fragment_downloads": 12,
     "http_chunk_size": 10485760,
     "no_check_certificates": True,
     "geo_bypass": True,
     "extractor_args": {"youtube": {
         "skip": ["comments", "translated_subs"],
-        "player_client": ["android"],
+        "player_client": ["default", "tv_simply"],
     }},
+    # Use aria2c for blazing fast parallel downloads (if available)
+    "external_downloader": "aria2c",
+    "external_downloader_args": {
+        "aria2c": [
+            "--min-split-size=1M",
+            "--max-connection-per-server=16",
+            "--max-concurrent-downloads=16",
+            "--split=16",
+        ],
+    },
 }
 
 # Quality presets by height
@@ -48,16 +62,35 @@ class YouTubeDownloader:
     def __init__(self):
         self.temp_dir = TEMP_DIR / "youtube"
         self.temp_dir.mkdir(exist_ok=True)
+        self._aria2_available = self._check_aria2()
+
+    @staticmethod
+    def _check_aria2() -> bool:
+        """Check if aria2c is available at startup."""
+        import shutil
+        return shutil.which("aria2c") is not None
+
+    def _get_opts(self) -> dict:
+        """Get base options, stripping aria2c if not available."""
+        opts = {**_BASE_OPTS}
+        if not self._aria2_available:
+            opts.pop("external_downloader", None)
+            opts.pop("external_downloader_args", None)
+        return opts
 
     async def get_formats(self, url: str) -> dict:
         """Fetch all available qualities with sizes — for quality selection UI."""
         url = url.strip()
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(self._get_formats_sync, url))
+        return await loop.run_in_executor(_dl_pool, partial(self._get_formats_sync, url))
 
     def _get_formats_sync(self, url: str) -> dict:
         """Sync: extract info and build list of available qualities."""
-        opts = {**_BASE_OPTS, "skip_download": True}
+        opts = {**self._get_opts(), "skip_download": True}
+        # Don't use aria2 for info extraction
+        opts.pop("external_downloader", None)
+        opts.pop("external_downloader_args", None)
+
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             if not info:
@@ -104,7 +137,6 @@ class YouTubeDownloader:
             # If no format info, estimate from duration
             if not available and duration > 0:
                 for preset in QUALITY_PRESETS:
-                    # rough bitrate estimate per height
                     bitrates = {144: 150_000, 240: 300_000, 360: 600_000,
                                 480: 1_000_000, 720: 2_500_000, 1080: 5_000_000}
                     br = bitrates.get(preset["height"], 1_000_000)
@@ -148,24 +180,28 @@ class YouTubeDownloader:
         url = url.strip()
         loop = asyncio.get_event_loop()
         if audio_only:
-            return await loop.run_in_executor(None, partial(self._download_audio, url))
+            return await loop.run_in_executor(_dl_pool, partial(self._download_audio, url))
         else:
-            return await loop.run_in_executor(None, partial(self._download_video, url, height))
+            return await loop.run_in_executor(_dl_pool, partial(self._download_video, url, height))
 
     def _download_video(self, url: str, height: int = 0) -> dict:
         """Download video at specific height (or best)."""
         if height > 0:
             format_str = (
-                f"best[ext=mp4][height<={height}]/"
-                f"bestvideo[ext=mp4][height<={height}]+bestaudio[ext=m4a]/"
-                f"best[height<={height}]/"
-                f"best[ext=mp4]/best"
+                f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={height}]+bestaudio/"
+                f"best[height<={height}][ext=mp4]/"
+                f"best[height<={height}]/best"
             )
         else:
-            format_str = "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
+            format_str = (
+                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+                "bestvideo+bestaudio/"
+                "best[ext=mp4]/best"
+            )
 
         ydl_opts = {
-            **_BASE_OPTS,
+            **self._get_opts(),
             "format": format_str,
             "outtmpl": str(self.temp_dir / "%(id)s.%(ext)s"),
             "merge_output_format": "mp4",
@@ -175,9 +211,14 @@ class YouTubeDownloader:
 
     def _download_audio(self, url: str) -> dict:
         """Download audio only."""
+        opts = self._get_opts()
+        # Don't use aria2 for small audio files (overhead > benefit)
+        opts.pop("external_downloader", None)
+        opts.pop("external_downloader_args", None)
+
         ydl_opts = {
-            **_BASE_OPTS,
-            "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
+            **opts,
+            "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/worst",
             "outtmpl": str(self.temp_dir / "%(id)s.%(ext)s"),
             "postprocessors": [],
         }
@@ -194,6 +235,12 @@ class YouTubeDownloader:
             duration = info.get("duration") or 0
             video_id = info.get("id", "unknown")
             file_path = ydl.prepare_filename(info)
+
+            # For merged videos, yt-dlp outputs .mp4
+            if media_type == "video":
+                mp4_path = Path(file_path).with_suffix(".mp4")
+                if mp4_path.exists():
+                    file_path = str(mp4_path)
 
             # For audio, check native audio extensions
             if media_type == "audio":

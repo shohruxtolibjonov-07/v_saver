@@ -6,12 +6,16 @@ import os
 import uuid
 from pathlib import Path
 from functools import partial
+from concurrent.futures import ThreadPoolExecutor
 
 import yt_dlp
 
 from config import TEMP_DIR
 
 logger = logging.getLogger(__name__)
+
+# Dedicated thread pool for Instagram downloads
+_ig_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="igdl")
 
 
 class InstagramDownloader:
@@ -28,7 +32,7 @@ class InstagramDownloader:
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, partial(self._download_sync, url, content_type, audio_only)
+            _ig_pool, partial(self._download_sync, url, content_type, audio_only)
         )
 
     def _detect_content_type(self, url: str) -> str:
@@ -55,9 +59,10 @@ class InstagramDownloader:
             "noplaylist": True,
             "no_warnings": True,
             "quiet": True,
-            "socket_timeout": 30,
+            "socket_timeout": 20,
             "retries": 5,
-            "fragment_retries": 3,
+            "fragment_retries": 5,
+            "concurrent_fragment_downloads": 8,
             "noprogress": True,
             "http_chunk_size": 10485760,
             "no_check_certificates": True,

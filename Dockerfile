@@ -1,8 +1,8 @@
 FROM python:3.12-slim
 
-# Install ffmpeg
+# Install ffmpeg + aria2c (parallel download accelerator)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends ffmpeg aria2 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -12,6 +12,9 @@ WORKDIR /app
 # Copy requirements first (Docker cache)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Ensure yt-dlp is latest (YouTube breaks old versions fast)
+RUN pip install --no-cache-dir --upgrade yt-dlp
 
 # Copy bot source
 COPY . .
@@ -28,5 +31,5 @@ RUN adduser --disabled-password --no-create-home botuser && \
     chown -R botuser:botuser /app
 USER botuser
 
-# Run bot
-CMD ["python", "-u", "bot.py"]
+# Run bot with optimized Python flags
+CMD ["python", "-u", "-O", "bot.py"]
